@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Paper-RAG · 学术文献智能阅读助手</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,900;1,9..144,500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+    options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+
+<style>
+  :root {
+    --paper:    #f3ede1;
+    --paper-2:  #ece3d3;
+    --ink:      #221d18;
+    --ink-soft: #5b5147;
+    --rule:     #d8ccb6;
+    --oxblood:  #8a2b1c;
+    --oxblood-d:#6d2013;
+    --gold:     #b78a3c;
+    --teal:     #2f5d57;
+    --shadow:   0 1px 2px rgba(34,29,24,.08), 0 8px 28px rgba(34,29,24,.10);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: 'Newsreader', Georgia, serif;
+    color: var(--ink);
+    background-color: var(--paper);
+    background-image:
+      radial-gradient(120% 120% at 0% 0%, rgba(183,138,60,.08), transparent 45%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
+    font-size: 17px;
+    line-height: 1.6;
+  }
+
+  /* ---------- Layout ---------- */
+  .app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+  @media (max-width: 880px) { .app { grid-template-columns: 1fr; } .sidebar { display:none; } }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    border-right: 1px solid var(--rule);
+    background: linear-gradient(180deg, var(--paper-2), var(--paper));
+    padding: 26px 22px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 22px;
+  }
+  .brand { display:flex; align-items:baseline; gap:10px; }
+  .brand .mark {
+    font-family:'Fraunces',serif; font-weight:900; font-size:30px; line-height:1;
+    color: var(--oxblood); letter-spacing:-.02em;
+  }
+  .brand .mark sup { font-size:13px; color: var(--gold); }
+  .brand .sub { font-size:12.5px; color:var(--ink-soft); font-style:italic; }
+
+  .panel-title {
+    font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--ink-soft);
+    display:flex; align-items:center; gap:10px; margin-bottom:10px;
+  }
+  .panel-title::after { content:''; flex:1; height:1px; background:var(--rule); }
+
+  /* Upload */
+  .drop {
+    border:1.5px dashed var(--rule); border-radius:14px; padding:22px 16px;
+    text-align:center; cursor:pointer; transition:.18s; background:rgba(255,255,255,.25);
+  }
+  .drop:hover, .drop.drag { border-color:var(--oxblood); background:rgba(138,43,28,.05); }
+  .drop .ic { font-family:'Fraunces',serif; font-size:30px; color:var(--oxblood); }
+  .drop p { margin:8px 0 0; font-size:13.5px; color:var(--ink-soft); }
+  .drop b { color:var(--ink); }
+
+  .doc {
+    background:rgba(255,255,255,.4); border:1px solid var(--rule); border-radius:10px;
+    padding:12px 14px; margin-bottom:10px;
+  }
+  .doc .name { font-weight:500; font-size:15px; word-break:break-all; }
+  .doc .meta {
+    font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-soft);
+    margin-top:5px; display:flex; gap:12px; flex-wrap:wrap;
+  }
+  .doc .meta span b { color:var(--teal); }
+
+  .outline { font-size:13.5px; line-height:1.5; }
+  .outline .h { color:var(--ink-soft); }
+  .outline .h.l1 { color:var(--ink); font-weight:500; margin-top:4px; }
+
+  /* ---------- Main ---------- */
+  .main { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+  .topbar {
+    padding:18px 30px; border-bottom:1px solid var(--rule);
+    display:flex; align-items:center; justify-content:space-between; background:rgba(243,237,225,.85);
+    backdrop-filter: blur(6px);
+  }
+  .topbar h1 { font-family:'Fraunces',serif; font-weight:600; font-size:22px; margin:0; letter-spacing:-.01em; }
+  .topbar .status {
+    font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--ink-soft);
+    display:flex; align-items:center; gap:7px;
+  }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--gold); box-shadow:0 0 0 3px rgba(183,138,60,.2); }
+  .dot.on { background:var(--teal); box-shadow:0 0 0 3px rgba(47,93,87,.2); }
+
+  .chat { flex:1; overflow-y:auto; padding:30px 30px 10px; }
+  .thread { max-width:820px; margin:0 auto; }
+
+  .msg { margin-bottom:30px; }
+  .msg .who {
+    font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--ink-soft); margin-bottom:8px;
+  }
+  .msg.user .bubble {
+    font-family:'Fraunces',serif; font-size:20px; font-weight:500; color:var(--ink);
+    border-left:3px solid var(--oxblood); padding-left:16px;
+  }
+  .msg.bot .bubble { font-size:17px; }
+  .bubble :is(h1,h2,h3){ font-family:'Fraunces',serif; }
+  .bubble code {
+    font-family:'JetBrains Mono',monospace; font-size:.85em; background:var(--paper-2);
+    padding:1px 5px; border-radius:4px;
+  }
+  .bubble pre { background:var(--ink); color:#f3ede1; padding:14px; border-radius:10px; overflow:auto; }
+  .bubble pre code { background:none; color:inherit; }
+  .src-tag {
+    font-family:'JetBrains Mono',monospace; font-size:.8em; color:var(--oxblood);
+    background:rgba(138,43,28,.08); padding:0 4px; border-radius:3px;
+  }
+
+  /* Pipeline trace */
+  .trace {
+    border:1px solid var(--rule); border-radius:12px; background:rgba(255,255,255,.45);
+    margin-bottom:16px; overflow:hidden;
+  }
+  .trace summary {
+    cursor:pointer; list-style:none; padding:11px 16px; font-family:'JetBrains Mono',monospace;
+    font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-soft);
+    display:flex; align-items:center; gap:10px; user-select:none;
+  }
+  .trace summary::-webkit-details-marker { display:none; }
+  .trace summary .spin {
+    width:11px; height:11px; border:2px solid var(--rule); border-top-color:var(--oxblood);
+    border-radius:50%; animation:spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .trace[data-done="1"] summary .spin { display:none; }
+  .trace .body { padding:0 16px 14px; font-size:13.5px; }
+  .step { padding:9px 0; border-top:1px dashed var(--rule); }
+  .step .lbl {
+    font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--teal); margin-bottom:4px;
+  }
+  .step .rw { color:var(--ink-soft); font-style:italic; }
+  .step .rw b { color:var(--ink); font-style:normal; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+  .chip {
+    font-size:12px; background:var(--paper-2); border:1px solid var(--rule);
+    border-radius:20px; padding:2px 11px; color:var(--ink);
+  }
+  .chip .sc { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--oxblood); margin-left:5px; }
+  .stats { font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--ink-soft); }
+
+  .caret { display:inline-block; width:2px; height:1.05em; background:var(--oxblood);
+    margin-left:1px; vertical-align:text-bottom; animation:blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  /* Composer */
+  .composer { padding:16px 30px 26px; border-top:1px solid var(--rule); background:rgba(243,237,225,.9); }
+  .composer .wrap { max-width:820px; margin:0 auto; display:flex; gap:12px; align-items:flex-end; }
+  textarea#q {
+    flex:1; resize:none; border:1px solid var(--rule); border-radius:14px; padding:14px 16px;
+    font-family:'Newsreader',serif; font-size:16.5px; background:#fff; color:var(--ink);
+    box-shadow:var(--shadow); min-height:52px; max-height:160px; line-height:1.5;
+  }
+  textarea#q:focus { outline:none; border-color:var(--oxblood); }
+  button.send {
+    border:none; border-radius:14px; padding:0 24px; height:52px; cursor:pointer;
+    background:var(--oxblood); color:var(--paper); font-family:'Fraunces',serif;
+    font-weight:600; font-size:16px; transition:.16s; box-shadow:var(--shadow);
+  }
+  button.send:hover:not(:disabled) { background:var(--oxblood-d); }
+  button.send:disabled { opacity:.45; cursor:not-allowed; }
+  .hint { max-width:820px; margin:8px auto 0; font-size:12px; color:var(--ink-soft); font-style:italic; }
+
+  .empty { text-align:center; color:var(--ink-soft); padding:80px 20px; }
+  .empty .big { font-family:'Fraunces',serif; font-size:34px; font-weight:600; color:var(--ink); }
+  .empty p { font-style:italic; max-width:440px; margin:14px auto 0; }
+  .toast {
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:var(--paper); padding:11px 20px; border-radius:10px;
+    font-size:14px; box-shadow:var(--shadow); opacity:0; transition:.25s; pointer-events:none;
+  }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark">Paper·RAG<sup>α</sup></div>
+    </div>
+    <div class="brand"><div class="sub">层级解析 · 路由混合检索 · 长短期记忆</div></div>
+
+    <section>
+      <div class="panel-title">上传文献</div>
+      <div class="drop" id="drop">
+        <div class="ic">＋</div>
+        <p><b>点击或拖入 PDF</b><br/>LlamaParse 高精度解析</p>
+      </div>
+      <input type="file" id="file" accept="application/pdf" hidden />
+    </section>
+
+    <section>
+      <div class="panel-title">已入库文献</div>
+      <div id="docs"><div style="font-size:13px;color:var(--ink-soft);font-style:italic;">暂无文献</div></div>
+    </section>
+
+    <section style="flex:1">
+      <div class="panel-title">文档大纲</div>
+      <div class="outline" id="outline"></div>
+    </section>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="topbar">
+      <h1>学术文献智能阅读助手</h1>
+      <div class="status"><span class="dot" id="dot"></span><span id="statusText">等待文献入库</span></div>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="thread" id="thread">
+        <div class="empty" id="empty">
+          <div class="big">先上传一篇论文</div>
+          <p>解析完成后，即可就方法、实验、结论等向我提问。我会先路由定位章节，再做 BM25 + 向量混合检索与重排，最后生成有据可依的回答。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="wrap">
+        <textarea id="q" placeholder="例如：这篇论文提出的方法核心创新点是什么？" rows="1" disabled></textarea>
+        <button class="send" id="send" disabled>提问</button>
+      </div>
+      <div class="hint">回车发送 · Shift+回车换行 · 回答中的 [片段N] 指向检索到的来源</div>
+    </div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let sessionId = null;
+let busy = false;
+
+// ---- 初始化会话 ----
+(async () => {
+  try {
+    const r = await fetch('/api/session', { method: 'POST' });
+    sessionId = (await r.json()).session_id;
+  } catch (e) { sessionId = 'local-' + Date.now(); }
+})();
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function setReady(ready) {
+  $('#q').disabled = !ready; $('#send').disabled = !ready || busy;
+  $('#dot').classList.toggle('on', ready);
+  $('#statusText').textContent = ready ? '已就绪 · 可提问' : '等待文献入库';
+}
+
+// ---- 上传 ----
+const drop = $('#drop'), fileInput = $('#file');
+drop.addEventListener('click', () => fileInput.click());
+['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drag'); }));
+drop.addEventListener('drop', e => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', e => { if (e.target.files[0]) uploadFile(e.target.files[0]); });
+
+async function uploadFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf')) { toast('仅支持 PDF 文件'); return; }
+  drop.innerHTML = '<div class="ic">⟳</div><p>正在解析 <b>' + file.name + '</b>…</p>';
+  $('#statusText').textContent = '解析中…';
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || '上传失败');
+    addDoc(data.document); renderOutline(data.heading_tree);
+    setReady(true); toast('解析入库完成');
+  } catch (e) { toast('失败：' + e.message); }
+  finally { drop.innerHTML = '<div class="ic">＋</div><p><b>点击或拖入 PDF</b><br/>LlamaParse 高精度解析</p>'; }
+}
+
+function addDoc(d) {
+  const box = $('#docs');
+  if (box.querySelector('div[style]')) box.innerHTML = '';
+  const el = document.createElement('div'); el.className = 'doc';
+  el.innerHTML = `<div class="name">${d.source}</div>
+    <div class="meta">
+      <span>章节 <b>${d.num_sections}</b></span>
+      <span>父块 <b>${d.num_parents}</b></span>
+      <span>子块 <b>${d.num_children}</b></span>
+      <span>路由 <b>${d.num_routes}</b></span>
+    </div>`;
+  box.prepend(el);
+}
+
+function renderOutline(tree) {
+  const box = $('#outline'); box.innerHTML = '';
+  const walk = (nodes, depth) => nodes.forEach(n => {
+    const d = document.createElement('div');
+    d.className = 'h l' + n.level;
+    d.style.paddingLeft = (depth * 12) + 'px';
+    d.textContent = '· ' + n.title;
+    box.appendChild(d);
+    if (n.children?.length) walk(n.children, depth + 1);
+  });
+  walk(tree, 0);
+}
+
+// ---- Markdown + 数学公式安全渲染 ----
+function renderMarkdown(text) {
+  const math = [];
+  // 先抽出 \[...\] 与 \(...\)，避免 markdown 破坏其中的下划线/反斜杠
+  let protectedText = text
+    .replace(/\\\[[\s\S]*?\\\]/g, m => { math.push(m); return `@@M${math.length-1}@@`; })
+    .replace(/\\\([\s\S]*?\\\)/g, m => { math.push(m); return `@@M${math.length-1}@@`; });
+  let html = marked.parse(protectedText, { breaks: true });
+  html = html.replace(/@@M(\d+)@@/g, (_, i) => math[+i]);
+  html = html.replace(/\[(片段\d+)\]/g, '<span class="src-tag">[$1]</span>');
+  return DOMPurify.sanitize(html, { ADD_TAGS: ['span'] });
+}
+
+// ---- 提问 ----
+const q = $('#q'), sendBtn = $('#send'), thread = $('#thread');
+q.addEventListener('input', () => { q.style.height = 'auto'; q.style.height = Math.min(q.scrollHeight, 160) + 'px'; });
+q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
+sendBtn.addEventListener('click', ask);
+
+async function ask() {
+  const text = q.value.trim();
+  if (!text || busy) return;
+  $('#empty')?.remove();
+  busy = true; setReady(true); sendBtn.disabled = true;
+
+  // 用户气泡
+  thread.insertAdjacentHTML('beforeend',
+    `<div class="msg user"><div class="who">提问</div><div class="bubble">${escapeHtml(text)}</div></div>`);
+  q.value = ''; q.style.height = 'auto';
+
+  // 助手区块：流水线 trace + 答案
+  const turn = document.createElement('div'); turn.className = 'msg bot';
+  turn.innerHTML = `
+    <div class="who">回答</div>
+    <details class="trace" open><summary><span class="spin"></span>检索流水线</summary><div class="body" data-trace></div></details>
+    <div class="bubble" data-answer></div>`;
+  thread.appendChild(turn);
+  const traceBox = turn.querySelector('[data-trace]');
+  const answerBox = turn.querySelector('[data-answer]');
+  const trace = turn.querySelector('.trace');
+  answerBox.innerHTML = '<span class="caret"></span>';
+  scrollDown();
+
+  let answer = '';
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, question: text })
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const raw = buf.slice(0, idx).trim(); buf = buf.slice(idx + 2);
+        if (!raw.startsWith('data:')) continue;
+        const payload = raw.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        const ev = JSON.parse(payload);
+        handleEvent(ev, traceBox, answerBox, () => answer, v => answer = v);
+      }
+    }
+  } catch (e) {
+    answerBox.innerHTML = '<span style="color:var(--oxblood)">连接出错：' + escapeHtml(e.message) + '</span>';
+  } finally {
+    trace.setAttribute('data-done', '1');
+    busy = false; sendBtn.disabled = false; q.focus();
+  }
+}
+
+function handleEvent(ev, traceBox, answerBox, getAns, setAns) {
+  if (ev.type === 'rewrite') {
+    if (ev.original !== ev.rewritten)
+      addStep(traceBox, '查询改写', `<div class="rw">${escapeHtml(ev.original)} → <b>${escapeHtml(ev.rewritten)}</b></div>`);
+  } else if (ev.type === 'route') {
+    const chips = ev.sections.map(s =>
+      `<span class="chip">${escapeHtml(s.section_path || s.section_title || '—')}<span class="sc">${(s.score||0).toFixed(2)}</span></span>`).join('');
+    addStep(traceBox, '路由定位章节', `<div class="chips">${chips || '<span class="rw">全局检索</span>'}</div>`);
+  } else if (ev.type === 'retrieval') {
+    const d = ev.debug || {};
+    addStep(traceBox, '混合检索 · 融合重排',
+      `<div class="stats">BM25 ${d.bm25_hits} · 向量 ${d.vector_hits} · 融合(${d.fusion_mode}) ${d.fused} · 重排 ${d.reranked} · 上下文 ${ev.num_context}</div>`);
+  } else if (ev.type === 'token') {
+    let a = getAns() + ev.text; setAns(a);
+    answerBox.innerHTML = renderMarkdown(a) + '<span class="caret"></span>';
+    scrollDown();
+  } else if (ev.type === 'done') {
+    answerBox.innerHTML = renderMarkdown(getAns());
+    if (window.MathJax?.typesetPromise) MathJax.typesetPromise([answerBox]);
+    if (ev.sources?.length) {
+      const chips = ev.sources.map((s,i) =>
+        `<span class="chip">[片段${i+1}] ${escapeHtml(s.section_path||'—')}<span class="sc">${(s.score||0).toFixed(2)}</span></span>`).join('');
+      addStep(traceBox, '答案来源', `<div class="chips">${chips}</div>`);
+    }
+    scrollDown();
+  } else if (ev.type === 'error') {
+    answerBox.innerHTML = '<span style="color:var(--oxblood)">' + escapeHtml(ev.message) + '</span>';
+  }
+}
+
+function addStep(box, label, html) {
+  const s = document.createElement('div'); s.className = 'step';
+  s.innerHTML = `<div class="lbl">${label}</div>${html}`;
+  box.appendChild(s);
+}
+function scrollDown() { const c = $('#chat'); c.scrollTop = c.scrollHeight; }
+function escapeHtml(s) { return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+</script>
+</body>
+</html>
