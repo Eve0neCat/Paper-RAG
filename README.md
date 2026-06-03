@@ -50,8 +50,8 @@ paper-RAG/
               ├─ BM25（字词频率）
               └─ Milvus 向量（bge-m3 语义）
               └─ 融合(RRF / 加权) → bge-reranker-v2-m3 重排 → Top-N
-                    └─(6) Auto-Merge：子节点聚集同父 → 回填完整父节点
-                          └─ qwen流式生成（标注 [片段N] 来源）
+                  └─ Auto-Merge：子节点聚集同父 → 回填完整父节点
+                      └─ qwen流式生成（标注 [片段N] 来源）
 ```
 
 ---
