@@ -37,7 +37,7 @@ QWEN_TEMPERATURE = float(os.getenv("QWEN_TEMPERATURE", "0.1"))
 # LlamaParse（高精度 PDF 解析）
 # ----------------------------------------------------------------------------
 # 申请地址: https://cloud.llamaindex.ai/
-LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY", "llx-Hsm0oQIfHCYIjsv3wvK2up9Xu8C36YGTJ0Wcld8JozZvI7Cl")
+LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY", "llx-***")
 
 
 # ----------------------------------------------------------------------------
